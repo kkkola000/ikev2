@@ -93,15 +93,16 @@ IKEv2 VPN (strongSwan) для Ubuntu 24.04, версия $SCRIPT_VERSION
                            (по умолчанию 1.1.1.1,1.0.0.1)
   --pool CIDR              IPv4-подсеть для клиентов (по умолчанию 10.10.10.0/24)
   --ipv6 | --no-ipv6       IPv6 в туннеле (по умолчанию — если у сервера есть IPv6)
-  -y, --yes                не задавать вопросов, брать значения по умолчанию
 
 Параметры uninstall:
   --purge                  удалить также пакеты strongSwan
-  -y, --yes                не спрашивать подтверждение
+
+Скрипт ничего не спрашивает: всё, что не задано параметрами, берётся
+из предыдущей установки или определяется автоматически.
 
 Примеры:
   sudo bash $(basename "$0")
-  sudo bash $(basename "$0") --host vpn.example.com --letsencrypt --email me@example.com -y
+  sudo bash $(basename "$0") --host vpn.example.com --letsencrypt --email me@example.com
   sudo ikev2-vpn add-user alice
 EOF
 }
@@ -168,30 +169,6 @@ require_root() {
     [[ $EUID -eq 0 ]] || die "Запустите скрипт от root (через sudo)."
 }
 
-confirm() { # confirm "вопрос" [default y|n]
-    local prompt=$1 def=${2:-n} ans
-    # -y/--yes отвечает «да» на всё; без терминала берём ответ по умолчанию.
-    [[ ${ASSUME_YES:-0} == 1 ]] && return 0
-    if [[ ! -t 0 ]]; then
-        [[ $def == y ]]
-        return
-    fi
-    if [[ $def == y ]]; then prompt+=" [Y/n] "; else prompt+=" [y/N] "; fi
-    read -r -p "$prompt" ans || ans=
-    ans=${ans:-$def}
-    [[ $ans == [YyДд]* ]]
-}
-
-ask() { # ask "вопрос" "значение по умолчанию" -> stdout
-    local prompt=$1 def=$2 ans
-    if [[ ${ASSUME_YES:-0} == 1 || ! -t 0 ]]; then
-        printf '%s' "$def"
-        return
-    fi
-    read -r -p "$prompt [$def]: " ans || ans=
-    printf '%s' "${ans:-$def}"
-}
-
 check_os() {
     local id="" ver=""
     if [[ -r /etc/os-release ]]; then
@@ -201,8 +178,7 @@ check_os() {
         ver=$(. /etc/os-release && echo "${VERSION_ID:-}")
     fi
     if [[ $id != ubuntu || $ver != 24.04 ]]; then
-        warn "Скрипт рассчитан на Ubuntu 24.04, обнаружено: ${id:-?} ${ver:-?}."
-        confirm "Продолжить на свой страх и риск?" n || exit 1
+        warn "Скрипт рассчитан на Ubuntu 24.04, обнаружено: ${id:-?} ${ver:-?}. Продолжаю."
     fi
     command -v systemctl >/dev/null || die "Нужен systemd."
 
@@ -211,7 +187,6 @@ check_os() {
     case $virt in
         openvz | lxc | lxc-libvirt)
             warn "Сервер работает в контейнере ($virt): IPsec в ядре там обычно недоступен."
-            confirm "Всё равно продолжить?" n || exit 1
             ;;
     esac
 }
@@ -1038,7 +1013,7 @@ cmd_install() {
             --pool=*) opt_pool=${1#*=} ;;
             --ipv6) opt_ipv6=yes ;;
             --no-ipv6) opt_ipv6=no ;;
-            -y | --yes) ASSUME_YES=1 ;;
+            -y | --yes) ;; # оставлено для совместимости: вопросов больше нет
             -h | --help) usage; exit 0 ;;
             *) die "Неизвестный параметр: $1 (см. --help)" ;;
         esac
@@ -1077,16 +1052,11 @@ cmd_install() {
         [[ -n $IKEV2_POOL6 ]] || IKEV2_POOL6=$(gen_ula_pool)
     fi
 
-    local default_host
     if [[ -n $opt_host ]]; then
         IKEV2_HOST=$opt_host
-    else
-        default_host=$IKEV2_HOST
-        if [[ -z $default_host ]]; then
-            info "Определение публичного IP-адреса сервера"
-            default_host=$(detect_public_ip)
-        fi
-        IKEV2_HOST=$(ask "Домен или публичный IP сервера" "$default_host")
+    elif [[ -z $IKEV2_HOST ]]; then
+        info "Определение публичного IP-адреса сервера"
+        IKEV2_HOST=$(detect_public_ip)
     fi
     IKEV2_HOST=${IKEV2_HOST,,}
     [[ -n $IKEV2_HOST ]] || die "Не удалось определить адрес сервера, укажите --host"
@@ -1097,17 +1067,10 @@ cmd_install() {
         IKEV2_CERT_MODE=$opt_mode
     elif [[ -z $IKEV2_CERT_MODE ]]; then
         IKEV2_CERT_MODE=selfsigned
-        if is_fqdn "$IKEV2_HOST" && [[ -t 0 && ${ASSUME_YES:-0} != 1 ]] &&
-            confirm "Получить бесплатный сертификат Let's Encrypt для $IKEV2_HOST (нужен свободный порт 80)?" y; then
-            IKEV2_CERT_MODE=letsencrypt
-        fi
     fi
     if [[ $IKEV2_CERT_MODE == letsencrypt ]]; then
         is_fqdn "$IKEV2_HOST" || die "Для Let's Encrypt нужен домен, а не IP-адрес (--host vpn.example.com) или используйте --self-signed"
         [[ -n $opt_email ]] && IKEV2_LE_EMAIL=$opt_email
-        if [[ -z $IKEV2_LE_EMAIL && -z $opt_email ]]; then
-            IKEV2_LE_EMAIL=$(ask "Email для уведомлений Let's Encrypt (можно пусто)" "")
-        fi
         local resolved public_ip
         resolved=$(getent ahostsv4 "$IKEV2_HOST" 2>/dev/null | awk 'NR == 1 { print $1 }') || resolved=
         [[ -n $resolved ]] || die "Домен $IKEV2_HOST не резолвится в IPv4-адрес."
@@ -1115,7 +1078,6 @@ cmd_install() {
         if [[ -n $public_ip && $resolved != "$public_ip" ]]; then
             warn "$IKEV2_HOST указывает на $resolved, а публичный IP сервера — $public_ip."
             warn "Если A-запись не указывает на этот сервер, Let's Encrypt не выдаст сертификат."
-            confirm "Продолжить?" y || exit 1
         fi
     fi
 
@@ -1124,7 +1086,7 @@ cmd_install() {
     if [[ -n $opt_user ]]; then
         first_user=$opt_user
     elif [[ -z $(list_user_names) ]]; then
-        first_user=$(ask "Имя пользователя VPN" "vpnuser")
+        first_user=vpnuser
     fi
     if [[ -n $first_user ]]; then
         valid_username "$first_user" ||
@@ -1149,7 +1111,6 @@ cmd_install() {
 EOF
     [[ -n $first_user ]] && echo "    Пользователь:   $first_user"
     echo
-    confirm "Продолжить установку?" y || exit 1
 
     # --- Установка ---
     info "Установка пакетов strongSwan"
@@ -1340,7 +1301,7 @@ cmd_uninstall() {
     while (($#)); do
         case $1 in
             --purge) purge=1 ;;
-            -y | --yes) ASSUME_YES=1 ;;
+            -y | --yes) ;; # оставлено для совместимости
             *) die "Неизвестный параметр: $1" ;;
         esac
         shift
@@ -1349,8 +1310,7 @@ cmd_uninstall() {
     IKEV2_CERT_MODE=""
     load_state || true
 
-    warn "Будут удалены: настройки VPN, CA, пользователи и профили в $CLIENTS_DIR."
-    confirm "Удалить IKEv2 VPN-сервер?" n || die "Отменено (для удаления без вопросов добавьте --yes)."
+    warn "Удаляются настройки VPN, CA, пользователи и профили в $CLIENTS_DIR."
 
     info "Остановка служб"
     systemctl disable --now ikev2-vpn-firewall.service >/dev/null 2>&1 || true

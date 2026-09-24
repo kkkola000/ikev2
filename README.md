@@ -36,9 +36,9 @@ cd ikev2
 sudo bash ikev2-setup.sh
 ```
 
-Скрипт спросит адрес сервера (публичный IP определяется автоматически), предложит
-Let's Encrypt, если введён домен, и имя первого пользователя. Пароль генерируется
-автоматически. В конце он выводит логин, пароль и путь к профилям
+Скрипт ничего не спрашивает. Без параметров он сам определяет публичный IP,
+выпускает сертификат собственного CA и создаёт пользователя `vpnuser` со случайным
+паролем. В конце выводятся логин, пароль и путь к профилям
 (`/root/ikev2-clients/<пользователь>/`).
 
 Скачать профили на свой компьютер:
@@ -47,14 +47,14 @@ Let's Encrypt, если введён домен, и имя первого пол
 scp -r root@АДРЕС_СЕРВЕРА:/root/ikev2-clients/ .
 ```
 
-### Установка без вопросов
+### Примеры
 
 ```bash
 # По IP-адресу, собственный CA
-sudo bash ikev2-setup.sh --host 203.0.113.10 --user alice -y
+sudo bash ikev2-setup.sh --host 203.0.113.10 --user alice
 
 # По домену с сертификатом Let's Encrypt
-sudo bash ikev2-setup.sh --host vpn.example.com --letsencrypt --email admin@example.com --user alice -y
+sudo bash ikev2-setup.sh --host vpn.example.com --letsencrypt --email admin@example.com --user alice
 ```
 
 ### Параметры `install`
@@ -70,7 +70,6 @@ sudo bash ikev2-setup.sh --host vpn.example.com --letsencrypt --email admin@exam
 | `--dns СПИСОК` | `1.1.1.1,1.0.0.1` | DNS-серверы для клиентов, через запятую |
 | `--pool CIDR` | `10.10.10.0/24` | Подсеть адресов клиентов (частная, /16–/29) |
 | `--ipv6` / `--no-ipv6` | авто | IPv6 в туннеле |
-| `-y`, `--yes` | — | Не задавать вопросов |
 
 `install` можно запускать повторно: например, чтобы сменить DNS или адрес сервера.
 CA, пользователи и их пароли при этом сохраняются, а профили пересоздаются.
@@ -217,3 +216,5 @@ sudo iptables -S IKEV2-INPUT; sudo iptables -t nat -S IKEV2-POSTROUTING
 sudo ikev2-vpn uninstall           # конфигурация, CA, пользователи, правила файрвола
 sudo ikev2-vpn uninstall --purge   # то же + пакеты strongSwan
 ```
+
+Удаление выполняется сразу, без подтверждения.
